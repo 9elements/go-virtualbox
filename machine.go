@@ -162,7 +162,8 @@ func (m *Manager) ListMachines(ctx context.Context) ([]*Machine, error) {
 
 // ModifyMachine modifies the data of the machine
 func (m *Manager) ModifyMachine(ctx context.Context, vm *Machine) error {
-	args := []string{"modifyvm", vm.Name,
+	args := []string{
+		"modifyvm", vm.Name,
 		"--firmware", vm.Firmware,
 		"--bioslogofadein", "off",
 		"--bioslogofadeout", "off",
@@ -375,16 +376,29 @@ func (m *Machine) Stop() error {
 		}
 	}
 
-	for m.State != Poweroff { // busy wait until the machine is stopped
+	ctx, cancel := context.WithTimeout(context.Background(), StopTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
 		if _, _, err := Manage().run("controlvm", m.Name, "acpipowerbutton"); err != nil {
 			return err
 		}
-		time.Sleep(1 * time.Second)
-		if err := m.Refresh(); err != nil {
-			return err
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("failed to stop VM %q: timeout after %v", m.Name, StopTimeout)
+		case <-ticker.C:
+			if err := m.Refresh(); err != nil {
+				return err
+			}
+			if m.State == Poweroff {
+				return nil
+			}
 		}
 	}
-	return nil
 }
 
 // Poweroff forcefully stops the machine. State is lost and might corrupt the disk image.
@@ -499,7 +513,8 @@ func (m *Machine) DelNATPF(n int, name string) error {
 
 // SetNIC set the n-th NIC.
 func (m *Machine) SetNIC(n int, nic NIC) error {
-	args := []string{"modifyvm", m.Name,
+	args := []string{
+		"modifyvm", m.Name,
 		fmt.Sprintf("--nic%d", n), string(nic.Network),
 		fmt.Sprintf("--nictype%d", n), string(nic.Hardware),
 		fmt.Sprintf("--cableconnected%d", n), "on",
